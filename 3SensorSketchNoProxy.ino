@@ -90,13 +90,12 @@ void createPOSTRequest(int value, String sensorId)
     if (sensorId == "button")
     {
       client.println("POST /" + secondaryHostPath + " HTTP/1.1");
-      client.println("Host: " + host);
     }
     else
     {
       client.println("POST /" + mainHostPath + " HTTP/1.1");
-      client.println("Host: " + host);
     }
+    client.println("Host: " + host);
     client.println("Content-Type: application/json");
     client.println("Connection: close");
     client.print("Content-Length: ");
