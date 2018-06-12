@@ -3,9 +3,6 @@
 #include <MFRC522.h>
 #include <ArduinoJson.h>
 
-#define RST_PIN 9
-#define SS_PIN 8
-
 int lightSensorPin = 2;
 int humiditySensorPin = 3;
 int buttonPin = 5;
