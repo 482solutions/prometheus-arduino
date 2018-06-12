@@ -72,8 +72,8 @@ void loop()
     return;
   }
 
-  mfrc522.PICC_DumpToSerial(&(mfrc522.uid));
   createPOSTRequest(1, "sensor3");
+  mfrc522.PICC_DumpToSerial(&(mfrc522.uid));
 }
 
 void createPOSTRequest(int value, String sensorId)
