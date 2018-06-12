@@ -3,11 +3,12 @@
 #include <MFRC522.h>
 #include <ArduinoJson.h>
 
+#define RST_PIN 9
+#define SS_PIN 8
+
 int lightSensorPin = 2;
 int humiditySensorPin = 3;
 int buttonPin = 5;
-int RSTPin = 9;
-int SSPin = 8;
 
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 String host = "https://arduino-mijin-deaizwongu.now.sh";
