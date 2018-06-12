@@ -25,7 +25,6 @@ void setup()
 {
   Serial.begin(9600);
   Serial.println("Starting serial communication...");
-  delay(1000);
   Ethernet.begin(mac);
   Serial.println("Starting Ethernet сonnection...");
   Serial.print("My IP address: ");
@@ -86,50 +85,34 @@ void createPOSTRequest(int value, String sensorId)
   root["shipmentId"] = "shrimp-25-05-18";
   root.prettyPrintTo(Serial);
 
-  if (sensorId == "button")
+  if (client.connect(host, 80))
   {
-    if (client.connect(host, 80))
+    if (sensorId == "button")
     {
-      Serial.println("Hey mom");
       client.println("POST /" + secondaryHostPath + " HTTP/1.1");
       client.println("Host: " + host);
-      client.println("Content-Type: application/json");
-      client.println("Connection: close");
-      client.print("Content-Length: ");
-      client.println(root.measurePrettyLength());
-      client.println();
-      root.prettyPrintTo(client);
-      client.println();
     }
     else
-    {
-      Serial.println("Connection failed");
-    }
-  }
-  else
-  {
-    if (client.connect(proxyServerAddress, proxyServerPort))
     {
       client.println("POST /" + mainHostPath + " HTTP/1.1");
       client.println("Host: " + host);
-      client.println("Content-Type: application/json");
-      client.println("Connection: close");
-      client.print("Content-Length: ");
-      client.println(root.measurePrettyLength());
-      client.println();
-      root.prettyPrintTo(client);
-      client.println();
     }
-    else
-    {
-      Serial.println("Connection failed");
-    }
+    client.println("Content-Type: application/json");
+    client.println("Connection: close");
+    client.print("Content-Length: ");
+    client.println(root.measurePrettyLength());
+    client.println();
+    root.prettyPrintTo(client);
+    client.println();
+  }
+  else
+  {
+    Serial.println("Connection failed");
   }
 }
 
 void ShowReaderDetails()
 {
-  // Get the MFRC522 software version
   byte v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
   Serial.print(F("MFRC522 Software Version: 0x"));
   Serial.print(v, HEX);
@@ -140,7 +123,6 @@ void ShowReaderDetails()
   else
     Serial.print(F(" (unknown)"));
   Serial.println("");
-  // When 0x00 or 0xFF is returned, communication probably failed
   if ((v == 0x00) || (v == 0xFF))
   {
     Serial.println(F("WARNING: Communication failure, is the MFRC522 properly connected?"));
