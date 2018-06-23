@@ -1,66 +1,138 @@
+#include <WiFiEsp.h>
 #include <SPI.h>
-#include <Ethernet.h>
 #include <MFRC522.h>
 #include <ArduinoJson.h>
+#include <Keypad.h>
+#include <HX711.h>
+#include <Ethernet.h>
+#include "SoftwareSerial.h"
 
 #define RST_PIN 9
-#define SS_PIN 8
+#define SS_PIN 10
 
-int lightSensorPin = 2;
-int humiditySensorPin = 3;
-int buttonPin = 5;
+const byte ROWS = 3;
+const byte COLS = 3;
 
-byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
-String host = "https://arduino-mijin-deaizwongu.now.sh";
-String mainHostPath = "/device/signal";
-String secondaryHostPath = "/buyer/prepay";
+char hexaKeys[ROWS][COLS] = {
+    {'1', '2', '3'},
+    {'4', '5', '6'},
+    {'7', '8', '9'}};
 
-int lightSensorState = 0;
-int humiditySensorState = 0;
+const byte humiditySensorPin = 16;
+const byte rowPins[ROWS] = {4, 3, 2};
+const byte colPins[COLS] = {7, 6, 5};
 
+const String accessPassword = "1234";
+const String PID = "D5 50 7E 63";
+const char ssid[] = "AndroidAP";
+const char wifiPassword[] = "lfwc7073";
+const byte port = 3000;
+
+SoftwareSerial Serial1(A3, A4);
+WiFiEspClient client;
 MFRC522 mfrc522(SS_PIN, RST_PIN);
-EthernetClient client;
+Keypad keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
 StaticJsonBuffer<100> jsonBuffer;
+HX711 scale(A1, A0);
+
+short status = WL_IDLE_STATUS;
+byte sensorsState[3] = {0, 0, 0};
+short weight;
+char key = 0;
+String password;
+boolean isInit = false;
 
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(19200);
+  Serial1.begin(115200);
   Serial.println("Starting serial communication...");
-  Ethernet.begin(mac);
-  Serial.println("Starting Ethernet сonnection...");
-  Serial.print("My IP address: ");
-  Serial.println(Ethernet.localIP());
+
+  WiFi.init(&Serial1);
+
+  while (status != WL_CONNECTED)
+  {
+    Serial.print("Attempting to connect to WPA SSID: ");
+    Serial.println(ssid);
+    status = WiFi.begin(ssid, wifiPassword);
+  }
+
+  printWifiStatus();
+
+  scale.tare();
+  scale.set_scale(-14.77);
+
+  keypad.setHoldTime(10);
+
   SPI.begin();
   Serial.println("Starting SPI bus");
-  mfrc522.PCD_Init();
-  ShowReaderDetails();
 
-  pinMode(lightSensorPin, INPUT);
+  mfrc522.PCD_Init();
+
   pinMode(humiditySensorPin, INPUT);
-  pinMode(buttonPin, INPUT);
 }
 
 void loop()
 {
-  if (digitalRead(buttonPin) == HIGH)
+  if (checkAllSensorsState())
   {
-    createPOSTRequest(1, "button");
+    isInit = false;
+    resetAllSensorsState();
   }
 
-  if (lightSensorState != digitalRead(lightSensorPin))
+  char key = keypad.getKey();
+
+  if (key != NO_KEY)
   {
-    lightSensorState = digitalRead(lightSensorPin);
-    Serial.print("LightSensorState: ");
-    Serial.println(lightSensorState);
-    createPOSTRequest(lightSensorState, "sensor1");
+    Serial.println(key);
+    password += key;
   }
 
-  if (humiditySensorState != digitalRead(humiditySensorPin))
+  if (password.length() >= 4)
   {
-    humiditySensorState = digitalRead(humiditySensorPin);
-    Serial.print("HumiditySensorState: ");
-    Serial.println(humiditySensorState);
-    createPOSTRequest(humiditySensorState, "sensor2");
+    if (accessPassword.equals(password))
+    {
+      sendRequest(createRequestBody(1, "button", true));
+      isInit = true;
+      password = "";
+    }
+    else
+    {
+      sendRequest(createRequestBody(0, "button", "Wrong Password", true));
+      password = "";
+    }
+  }
+  weight = scale.get_units(10) * 0.035274;
+  if (weight<300 + 10 & weight> 300 - 10)
+  {
+    Serial.println("WeightSensorState: " + weight);
+    if (sensorsState[0] == 1)
+    {
+      sendRequest(createRequestBody(0, "WeightSensor", "Already signed", false));
+    }
+    else
+    {
+      sensorsState[0] = 1;
+      sendRequest(createRequestBody(1, "WeightSensor", false));
+    }
+    while (weight<(300 + 10) & weight> 300 - 10)
+    {
+      weight = scale.get_units(10) * 0.035274;
+    }
+  }
+
+  if (digitalRead(humiditySensorPin) == LOW)
+  {
+    Serial.println("HumiditySensorState: LOW");
+    if (sensorsState[1] == 1)
+    {
+      sendRequest(createRequestBody(0, "HumiditySensor", "Already signed", false));
+    }
+    else
+    {
+      sensorsState[1] = 1;
+      sendRequest(createRequestBody(1, "HumiditySensor", false));
+    }
   }
 
   if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial())
@@ -69,34 +141,111 @@ void loop()
     return;
   }
 
-  createPOSTRequest(1, "sensor3");
-  mfrc522.PICC_DumpToSerial(&(mfrc522.uid));
-}
-
-void createPOSTRequest(int value, String sensorId)
-{
-  Serial.println("Creating request");
-  jsonBuffer.clear();
-  client.stop();
-
-  JsonObject &root = jsonBuffer.createObject();
-  root["value"] = value;
-  root["sensorId"] = sensorId;
-  root["deviceId"] = "arduinoUNO";
-  root["shipmentId"] = "shrimp-25-05-18";
-  root.prettyPrintTo(Serial);
-
-  if (client.connect(host, 80))
+  Serial.print("UID tag :");
+  String content = "";
+  byte letter;
+  for (byte i = 0; i < mfrc522.uid.size; i++)
   {
-    if (sensorId == "button")
+    Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " ");
+    Serial.print(mfrc522.uid.uidByte[i], HEX);
+    content.concat(String(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " "));
+    content.concat(String(mfrc522.uid.uidByte[i], HEX));
+  }
+
+  Serial.println();
+  Serial.print("Message : ");
+  content.toUpperCase();
+  if (content.substring(1) == PID)
+  {
+    if (sensorsState[2] == 1)
     {
-      client.println("POST /" + secondaryHostPath + " HTTP/1.1");
+      sendRequest(createRequestBody(0, "RFIDMagnet", "Already signed", false));
     }
     else
     {
-      client.println("POST /" + mainHostPath + " HTTP/1.1");
+      sensorsState[2] = 1;
+      sendRequest(createRequestBody(1, "RFIDMagnet", false));
     }
-    client.println("Host: " + host);
+  }
+  else
+  {
+    Serial.println("Access denied");
+    sendRequest(createRequestBody(0, "RFIDMagnet", "Wrong card with PID: " + content.substring(1), false));
+  }
+}
+
+JsonObject &createRequestBody(int value, String sensorId, boolean primary)
+{
+  return createRequestBody(value, sensorId, "", primary);
+}
+
+JsonObject &createRequestBody(int value, String sensorId, String message, boolean primary)
+{
+  jsonBuffer.clear();
+  JsonObject &root = jsonBuffer.createObject();
+  root["sensorId"] = sensorId;
+  root["deviceId"] = "arduinoUNO";
+  root["shipmentId"] = "shrimp-25-05-18";
+
+  if (!isInit & !primary)
+  {
+    root["status"] = "Transaction is not initiated";
+    root["value"] = 0;
+    Serial.println("Hu1");
+  }
+  else if (message != "")
+  {
+    root["status"] = message;
+    root["value"] = 0;
+    Serial.println("Hu2");
+  }
+  else
+  {
+    root["status"] = "Success";
+    root["value"] = value;
+    Serial.println("Hu3");
+  }
+  return root;
+}
+
+boolean checkAllSensorsState()
+{
+  boolean result = true;
+  for (byte i = 0; i < sizeof(sensorsState); i++)
+  {
+    if (sensorsState[i] == 0)
+    {
+      result = false;
+    }
+  }
+  return result;
+}
+
+void resetAllSensorsState()
+{
+  for (byte i = 0; i < sizeof(sensorsState); i++)
+  {
+    sensorsState[i] = 0;
+  }
+}
+
+void sendRequest(JsonObject &root)
+{
+  Serial.println("Creating request");
+  client.stop();
+  root.prettyPrintTo(Serial);
+  Serial.println();
+
+  if (client.connect("46.101.30.8", 3000))
+  {
+    if (root["sensorId"] == "button")
+    {
+      client.println("POST /buyer/prepay HTTP/1.1");
+    }
+    else
+    {
+      client.println("POST /device/signal HTTP/1.1");
+    }
     client.println("Content-Type: application/json");
     client.println("Connection: close");
     client.print("Content-Length: ");
@@ -111,20 +260,17 @@ void createPOSTRequest(int value, String sensorId)
   }
 }
 
-void ShowReaderDetails()
+void printWifiStatus()
 {
-  byte v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
-  Serial.print(F("MFRC522 Software Version: 0x"));
-  Serial.print(v, HEX);
-  if (v == 0x91)
-    Serial.print(F(" = v1.0"));
-  else if (v == 0x92)
-    Serial.print(F(" = v2.0"));
-  else
-    Serial.print(F(" (unknown)"));
-  Serial.println("");
-  if ((v == 0x00) || (v == 0xFF))
-  {
-    Serial.println(F("WARNING: Communication failure, is the MFRC522 properly connected?"));
-  }
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+
+  long rssi = WiFi.RSSI();
+  Serial.print("Signal strength (RSSI):");
+  Serial.print(rssi);
+  Serial.println(" dBm");
 }
