@@ -7,33 +7,37 @@
 #include <Ethernet.h>
 #include "SoftwareSerial.h"
 
-#define RST_PIN 9
-#define SS_PIN 10
+#define RST_PIN 49
+#define SS_PIN 53
 
 const byte ROWS = 3;
 const byte COLS = 3;
 
 char hexaKeys[ROWS][COLS] = {
-    {'1', '2', '3'},
-    {'4', '5', '6'},
-    {'7', '8', '9'}};
+    {'1', '4', '7'},
+    {'2', '5', '8'},
+    {'3', '6', '9'}};
 
-const byte humiditySensorPin = 16;
-const byte rowPins[ROWS] = {4, 3, 2};
-const byte colPins[COLS] = {7, 6, 5};
+const byte humiditySensorPin = 48;
+const byte rowPins[ROWS] = {47, 46, 45};
+const byte colPins[COLS] = {44, 43, 42};
 
 const String accessPassword = "1234";
 const String PID = "D5 50 7E 63";
-const char ssid[] = "AndroidAP";
-const char wifiPassword[] = "lfwc7073";
-const byte port = 3000;
+const float calibrationFactor = -14.70;
+const float grammCoeficient = 0.035274;
+const byte weightError = 10;
+const short accessWeight = 300;
+const char ssid[] = "BlockChainHub";
+const char wifiPassword[] = "";
+const char host[] = "46.101.30.8";
+const short port = 3000;
 
-SoftwareSerial Serial1(A3, A4);
 WiFiEspClient client;
 MFRC522 mfrc522(SS_PIN, RST_PIN);
 Keypad keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS);
-StaticJsonBuffer<100> jsonBuffer;
-HX711 scale(A1, A0);
+StaticJsonBuffer<200> jsonBuffer;
+HX711 scale(2, 3);
 
 short status = WL_IDLE_STATUS;
 byte sensorsState[3] = {0, 0, 0};
@@ -60,9 +64,7 @@ void setup()
   printWifiStatus();
 
   scale.tare();
-  scale.set_scale(-14.77);
-
-  keypad.setHoldTime(10);
+  scale.set_scale(calibrationFactor);
 
   SPI.begin();
   Serial.println("Starting SPI bus");
@@ -74,11 +76,6 @@ void setup()
 
 void loop()
 {
-  if (checkAllSensorsState())
-  {
-    isInit = false;
-    resetAllSensorsState();
-  }
 
   char key = keypad.getKey();
 
@@ -86,6 +83,12 @@ void loop()
   {
     Serial.println(key);
     password += key;
+  }
+
+  if (checkAllSensorsState())
+  {
+    isInit = false;
+    resetAllSensorsState();
   }
 
   if (password.length() >= 4)
@@ -102,22 +105,22 @@ void loop()
       password = "";
     }
   }
-  weight = scale.get_units(10) * 0.035274;
-  if (weight<300 + 10 & weight> 300 - 10)
+  weight = scale.get_units() * grammCoeficient;
+  if (weight<accessWeight + weightError & weight> accessWeight - weightError)
   {
     Serial.println("WeightSensorState: " + weight);
     if (sensorsState[0] == 1)
     {
-      sendRequest(createRequestBody(0, "WeightSensor", "Already signed", false));
+      sendRequest(createRequestBody(0, "sensor1", "Already signed", false));
     }
     else
     {
       sensorsState[0] = 1;
-      sendRequest(createRequestBody(1, "WeightSensor", false));
+      sendRequest(createRequestBody(1, "sensor1", false));
     }
-    while (weight<(300 + 10) & weight> 300 - 10)
+    while (weight<accessWeight + weightError & weight> accessWeight - weightError)
     {
-      weight = scale.get_units(10) * 0.035274;
+      weight = scale.get_units(10) * grammCoeficient;
     }
   }
 
@@ -126,12 +129,12 @@ void loop()
     Serial.println("HumiditySensorState: LOW");
     if (sensorsState[1] == 1)
     {
-      sendRequest(createRequestBody(0, "HumiditySensor", "Already signed", false));
+      sendRequest(createRequestBody(0, "sensor2", "Already signed", false));
     }
     else
     {
       sensorsState[1] = 1;
-      sendRequest(createRequestBody(1, "HumiditySensor", false));
+      sendRequest(createRequestBody(1, "sensor2", false));
     }
   }
 
@@ -159,12 +162,12 @@ void loop()
   {
     if (sensorsState[2] == 1)
     {
-      sendRequest(createRequestBody(0, "RFIDMagnet", "Already signed", false));
+      sendRequest(createRequestBody(0, "sensor3", "Already signed", false));
     }
     else
     {
       sensorsState[2] = 1;
-      sendRequest(createRequestBody(1, "RFIDMagnet", false));
+      sendRequest(createRequestBody(1, "sensor3", false));
     }
   }
   else
@@ -191,19 +194,16 @@ JsonObject &createRequestBody(int value, String sensorId, String message, boolea
   {
     root["status"] = "Transaction is not initiated";
     root["value"] = 0;
-    Serial.println("Hu1");
   }
   else if (message != "")
   {
     root["status"] = message;
     root["value"] = 0;
-    Serial.println("Hu2");
   }
   else
   {
     root["status"] = "Success";
     root["value"] = value;
-    Serial.println("Hu3");
   }
   return root;
 }
@@ -236,7 +236,7 @@ void sendRequest(JsonObject &root)
   root.prettyPrintTo(Serial);
   Serial.println();
 
-  if (client.connect("46.101.30.8", 3000))
+  if (client.connect(host, port))
   {
     if (root["sensorId"] == "button")
     {
